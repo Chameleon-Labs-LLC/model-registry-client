@@ -1,0 +1,20 @@
+{
+  "name": "@chameleonlabs/model-registry",
+  "version": "0.1.0",
+  "description": "Resolve current LLM model IDs (Anthropic/OpenAI/Gemini) from the ChameleonLabs public model registry — or your own.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./registry.ts"
+  },
+  "scripts": {
+    "test": "node --test registry.test.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Chameleon-Labs-LLC/model-registry-client"
+  },
+  "engines": {
+    "node": ">=22.6"
+  }
+}
