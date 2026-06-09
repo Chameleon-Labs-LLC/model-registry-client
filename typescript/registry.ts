@@ -64,7 +64,9 @@ export interface RegistryClient {
 }
 
 export function createRegistryClient(opts: RegistryClientOptions = {}): RegistryClient {
-  const url = opts.url ?? process.env.MODEL_REGISTRY_URL ?? DEFAULT_URL;
+  const envUrl =
+    typeof process !== "undefined" ? process.env?.MODEL_REGISTRY_URL : undefined;
+  const url = opts.url ?? envUrl ?? DEFAULT_URL;
   const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
   const doFetch = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
