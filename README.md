@@ -103,6 +103,39 @@ Current families:
 | `openai` | `gpt`, `gpt-mini`, `gpt-nano`, `gpt-pro`, `chat` |
 | `gemini` | `pro`, `flash`, `flash-lite` |
 
+## Token pricing feed
+
+The same bucket publishes a **daily token-pricing feed** — each provider's official
+pricing page, scraped and captured as structured tables:
+
+```
+https://chameleonlabs-model-registry.s3.us-east-1.amazonaws.com/pricing/latest.json
+```
+
+(plus dated history at `pricing/YYYY-MM-DD.json`). It's a *faithful capture*, not a
+normalized rate card: `providers[provider].token_pricing_tables` is a list of
+`{section, columns, rows}` tables whose row keys are the provider's own column headers
+(OpenAI and Anthropic key rows by `"Model"`, Google by `"Metric"`). Check `unit_note` —
+prices are usually per 1M tokens.
+
+```python
+from model_registry import get_pricing, pricing_rows
+
+doc  = get_pricing()                      # full document
+rows = pricing_rows("anthropic")          # all rows, each tagged with its "section"
+```
+
+```ts
+import { createPricingClient } from "@chameleonlabs/model-registry";
+
+const pricing = createPricingClient();
+const doc = await pricing.getPricing();
+const rows = await pricing.rows("anthropic");
+```
+
+Same cache TTL, timeout, and fetch-fail ladder as the registry client; override the URL
+with `MODEL_PRICING_URL` or `url=` / `{ url }`.
+
 ## Bring your own registry
 
 Publish any JSON matching the schema above to a public URL, then either:
@@ -124,16 +157,19 @@ same shape works — even a hand-maintained static file.
 | `get_registry(...)` | the full parsed registry dict |
 | `context_window(model_id, ...)` | tokens or `None` |
 | `available(provider, ...)` | curated ID list |
+| `get_pricing(*, url=None, fallback_path=None, ttl_seconds=3600)` | the full token-pricing document |
+| `pricing_rows(provider, ...)` | provider's pricing rows flattened, each tagged with `"section"`; `LookupError` if unknown |
 | `clear_cache()` | drop the in-memory cache |
 
 **TypeScript** — `createRegistryClient({ url?, fallback?, ttlMs?, fetchImpl?, now? })` returns
 `{ getRegistry, resolve, contextWindow, available, clearCache }` (all async except `clearCache`).
+`createPricingClient(...)` takes the same options and returns `{ getPricing, rows, clearCache }`.
 
 ## Tests
 
 ```bash
-cd python && python3 -m unittest discover -s tests   # 10 tests
-cd typescript && node --test registry.test.ts        # 9 tests
+cd python && python3 -m unittest discover -s tests   # 19 tests
+cd typescript && node --test registry.test.ts        # 16 tests
 ```
 
 No network needed — fetch and clock are injectable.

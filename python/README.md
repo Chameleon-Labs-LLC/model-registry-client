@@ -14,6 +14,14 @@ model_id = resolve("anthropic", "opus")   # -> e.g. "claude-opus-4-8"
 window = context_window(model_id)         # -> 200000
 ```
 
+Daily token pricing (raw provider pricing tables) from the same bucket:
+
+```python
+from model_registry import get_pricing, pricing_rows
+
+rows = pricing_rows("anthropic")          # rows tagged with their table "section"
+```
+
 Prefer zero dependencies? Vendor `src/model_registry/client.py` as a single file.
 
 Full docs (registry schema, fallback pattern, TypeScript client): see the
