@@ -43,6 +43,8 @@ export interface RegistryClientOptions {
 
 export const DEFAULT_URL =
   "https://chameleonlabs-model-registry.s3.us-east-1.amazonaws.com/models/latest.json";
+export const DEFAULT_PRICING_URL =
+  "https://chameleonlabs-model-registry.s3.us-east-1.amazonaws.com/pricing/latest.json";
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5000;
 
@@ -112,6 +114,110 @@ export function createRegistryClient(opts: RegistryClientOptions = {}): Registry
     async available(provider) {
       const reg = await getRegistry();
       return [...(reg.available[provider] ?? [])];
+    },
+    clearCache() {
+      memo = null;
+    },
+  };
+}
+
+/**
+ * Token-pricing feed (published daily by the same registry bucket).
+ *
+ * The document is the raw scrape of each provider's official pricing page:
+ * `providers[provider].token_pricing_tables` is a list of `{section, columns, rows}`
+ * tables whose row keys are the provider's own column headers (OpenAI and Anthropic
+ * tables key rows by "Model"; Google's by "Metric"). A faithful capture, not a
+ * normalized rate card — see `unit_note` in the document.
+ */
+
+export interface PricingTable {
+  section: string;
+  columns: string[];
+  rows: Record<string, string>[];
+}
+
+export interface PricingProvider {
+  name: string;
+  token_pricing_tables: PricingTable[];
+  [extra: string]: unknown; // source URLs, parser notes, table counts
+}
+
+export interface PricingDocument {
+  fetched_at: string;
+  currency: string;
+  unit_note?: string;
+  providers: Record<string, PricingProvider>;
+}
+
+export interface PricingClientOptions {
+  /** Pricing URL. Default: MODEL_PRICING_URL env var, else the public ChameleonLabs URL. */
+  url?: string;
+  /** Last-known-good pricing document. Enables never-throw mode. */
+  fallback?: PricingDocument;
+  /** Cache TTL in ms. Default 1 hour. */
+  ttlMs?: number;
+  /** Test seams. */
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+}
+
+/** A pricing row flattened out of its table, tagged with the table's section heading. */
+export type PricingRow = Record<string, string> & { section: string };
+
+function isValidPricing(d: unknown): d is PricingDocument {
+  const doc = d as PricingDocument;
+  return !!doc && typeof doc === "object" && typeof doc.fetched_at === "string"
+    && !!doc.providers && typeof doc.providers === "object" && !Array.isArray(doc.providers);
+}
+
+export interface PricingClient {
+  getPricing(): Promise<PricingDocument>;
+  /** All of a provider's pricing rows, each gaining a `section` key. Throws on unknown provider. */
+  rows(provider: Provider): Promise<PricingRow[]>;
+  clearCache(): void;
+}
+
+export function createPricingClient(opts: PricingClientOptions = {}): PricingClient {
+  const envUrl =
+    typeof process !== "undefined" ? process.env?.MODEL_PRICING_URL : undefined;
+  const url = opts.url ?? envUrl ?? DEFAULT_PRICING_URL;
+  const ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const doFetch = opts.fetchImpl ?? fetch;
+  const now = opts.now ?? (() => Date.now());
+
+  let memo: { data: PricingDocument; ts: number } | null = null;
+
+  async function getPricing(): Promise<PricingDocument> {
+    if (memo && now() - memo.ts < ttlMs) return memo.data;
+    try {
+      const res = await doFetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      if (!res.ok) throw new Error(`pricing HTTP ${res.status}`);
+      const json = await res.json();
+      if (!isValidPricing(json)) throw new Error("pricing document invalid (need providers dict and fetched_at)");
+      memo = { data: json, ts: now() };
+      return memo.data;
+    } catch (err) {
+      console.error("model-pricing fetch failed; using cache/fallback:", err);
+      if (memo) return memo.data;
+      if (opts.fallback) return opts.fallback;
+      throw new Error(`pricing unavailable and no fallback configured: ${err}`);
+    }
+  }
+
+  return {
+    getPricing,
+    async rows(provider) {
+      const doc = await getPricing();
+      const entry = doc.providers[provider];
+      if (!entry) {
+        throw new Error(
+          `no provider ${provider} in pricing document (known: ${Object.keys(doc.providers).sort().join(", ")})`,
+        );
+      }
+      return (entry.token_pricing_tables ?? []).flatMap((table) =>
+        table.rows.map((row) => ({ section: table.section, ...row })),
+      );
     },
     clearCache() {
       memo = null;

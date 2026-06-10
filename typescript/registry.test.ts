@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createRegistryClient, type ModelRegistry } from "./registry.ts";
+import {
+  createPricingClient,
+  createRegistryClient,
+  type ModelRegistry,
+  type PricingDocument,
+} from "./registry.ts";
 
 const REG: ModelRegistry = {
   schema_version: 2,
@@ -103,4 +108,96 @@ test("clearCache forces refetch", async () => {
   c.clearCache();
   await c.getRegistry();
   assert.equal(calls, 2);
+});
+
+// --- pricing client ---
+
+const PRICING: PricingDocument = {
+  fetched_at: "2026-06-10T18:46:06Z",
+  currency: "USD where published by provider",
+  unit_note: "Prices per 1M tokens unless a row says otherwise.",
+  providers: {
+    anthropic: {
+      name: "Anthropic",
+      token_pricing_tables: [
+        {
+          section: "Pricing > Model pricing",
+          columns: ["Model", "Base Input Tokens", "Output Tokens"],
+          rows: [
+            { Model: "Claude Fable 5", "Base Input Tokens": "$10 / MTok", "Output Tokens": "$50 / MTok" },
+          ],
+        },
+        {
+          section: "Pricing > Fast mode pricing",
+          columns: ["Model", "Input", "Output"],
+          rows: [{ Model: "Claude Opus 4.6", Input: "$30 / MTok", Output: "$150 / MTok" }],
+        },
+      ],
+    },
+    google: {
+      name: "Google",
+      token_pricing_tables: [
+        {
+          section: "Gemini > Flash > Standard",
+          columns: ["Metric", "Paid Tier"],
+          rows: [{ Metric: "Input price", "Paid Tier": "$1.50" }],
+        },
+      ],
+    },
+  },
+};
+
+test("pricing: fetches and parses the document", async () => {
+  const c = createPricingClient({ fetchImpl: okFetch(PRICING) });
+  const doc = await c.getPricing();
+  assert.ok(doc.providers.anthropic);
+  assert.equal(doc.fetched_at, PRICING.fetched_at);
+});
+
+test("pricing: caches within TTL", async () => {
+  let calls = 0;
+  const counting = (async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => PRICING };
+  }) as unknown as typeof fetch;
+  let t = 1000;
+  const c = createPricingClient({ fetchImpl: counting, now: () => t });
+  await c.getPricing();
+  t += 100_000;
+  await c.getPricing();
+  assert.equal(calls, 1);
+  t += 4_000_000;
+  await c.getPricing();
+  assert.equal(calls, 2);
+});
+
+test("pricing: serves fallback when fetch fails and cache empty", async () => {
+  const c = createPricingClient({ fetchImpl: failFetch, fallback: PRICING });
+  const doc = await c.getPricing();
+  assert.equal(doc.currency, PRICING.currency);
+});
+
+test("pricing: throws without fallback", async () => {
+  const c = createPricingClient({ fetchImpl: failFetch });
+  await assert.rejects(() => c.getPricing(), /no fallback/);
+});
+
+test("pricing: rejects invalid document (falls back)", async () => {
+  const c = createPricingClient({ fetchImpl: okFetch({ providers: [] }), fallback: PRICING });
+  const doc = await c.getPricing();
+  assert.equal(doc.fetched_at, PRICING.fetched_at);
+});
+
+test("pricing: rows flattens tables and tags section", async () => {
+  const c = createPricingClient({ fetchImpl: okFetch(PRICING) });
+  const rows = await c.rows("anthropic");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].section, "Pricing > Model pricing");
+  assert.equal(rows[0].Model, "Claude Fable 5");
+  assert.equal(rows[1].section, "Pricing > Fast mode pricing");
+});
+
+test("pricing: rows rejects unknown provider", async () => {
+  const c = createPricingClient({ fetchImpl: okFetch(PRICING) });
+  await assert.rejects(() => c.rows("nobody"), /no provider nobody/);
 });
