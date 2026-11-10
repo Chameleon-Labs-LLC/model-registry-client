@@ -36,6 +36,10 @@ function recordingFetch(body: unknown): { fetchImpl: typeof fetch; urls: string[
   return { fetchImpl, urls };
 }
 
+/**
+ * Runs an async test with a URL environment variable temporarily set or unset.
+ * Restores its previous value even if the test throws or rejects.
+ */
 async function withUrlEnv(
   name: "MODEL_REGISTRY_URL" | "MODEL_PRICING_URL",
   value: string | undefined,
