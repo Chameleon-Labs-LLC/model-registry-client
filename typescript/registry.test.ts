@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   createPricingClient,
   createRegistryClient,
+  DEFAULT_PRICING_URL,
+  DEFAULT_URL,
   type ModelRegistry,
   type PricingDocument,
 } from "./registry.ts";
@@ -25,9 +27,65 @@ const REG: ModelRegistry = {
 function okFetch(body: unknown = REG): typeof fetch {
   return (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as typeof fetch;
 }
+function recordingFetch(body: unknown): { fetchImpl: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const fetchImpl = (async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return { ok: true, status: 200, json: async () => body };
+  }) as typeof fetch;
+  return { fetchImpl, urls };
+}
+
+/**
+ * Runs an async test with a URL environment variable temporarily set or unset.
+ * Restores its previous value even if the test throws or rejects.
+ */
+async function withUrlEnv(
+  name: "MODEL_REGISTRY_URL" | "MODEL_PRICING_URL",
+  value: string | undefined,
+  run: () => Promise<void>,
+): Promise<void> {
+  const previous = process.env[name];
+  try {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+    await run();
+  } finally {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  }
+}
+
 const failFetch = (async () => {
   throw new Error("connection refused");
 }) as unknown as typeof fetch;
+
+for (const scenario of [
+  { name: "default URL", envUrl: undefined, optionUrl: undefined, expected: DEFAULT_URL },
+  {
+    name: "option URL", envUrl: undefined,
+    optionUrl: "https://example.test/registry-option.json",
+    expected: "https://example.test/registry-option.json",
+  },
+  {
+    name: "environment URL", envUrl: "https://example.test/registry-env.json",
+    optionUrl: undefined, expected: "https://example.test/registry-env.json",
+  },
+  {
+    name: "option URL over environment URL",
+    envUrl: "https://example.test/registry-env.json",
+    optionUrl: "https://example.test/registry-option.json",
+    expected: "https://example.test/registry-option.json",
+  },
+]) {
+  test(`registry: fetches ${scenario.name}`, async () => {
+    await withUrlEnv("MODEL_REGISTRY_URL", scenario.envUrl, async () => {
+      const { fetchImpl, urls } = recordingFetch(REG);
+      await createRegistryClient({ url: scenario.optionUrl, fetchImpl }).getRegistry();
+      assert.deepEqual(urls, [scenario.expected]);
+    });
+  });
+}
 
 test("fetches and parses the registry", async () => {
   const c = createRegistryClient({ fetchImpl: okFetch() });
@@ -146,6 +204,33 @@ const PRICING: PricingDocument = {
     },
   },
 };
+
+for (const scenario of [
+  { name: "default URL", envUrl: undefined, optionUrl: undefined, expected: DEFAULT_PRICING_URL },
+  {
+    name: "option URL", envUrl: undefined,
+    optionUrl: "https://example.test/pricing-option.json",
+    expected: "https://example.test/pricing-option.json",
+  },
+  {
+    name: "environment URL", envUrl: "https://example.test/pricing-env.json",
+    optionUrl: undefined, expected: "https://example.test/pricing-env.json",
+  },
+  {
+    name: "option URL over environment URL",
+    envUrl: "https://example.test/pricing-env.json",
+    optionUrl: "https://example.test/pricing-option.json",
+    expected: "https://example.test/pricing-option.json",
+  },
+]) {
+  test(`pricing: fetches ${scenario.name}`, async () => {
+    await withUrlEnv("MODEL_PRICING_URL", scenario.envUrl, async () => {
+      const { fetchImpl, urls } = recordingFetch(PRICING);
+      await createPricingClient({ url: scenario.optionUrl, fetchImpl }).getPricing();
+      assert.deepEqual(urls, [scenario.expected]);
+    });
+  });
+}
 
 test("pricing: fetches and parses the document", async () => {
   const c = createPricingClient({ fetchImpl: okFetch(PRICING) });

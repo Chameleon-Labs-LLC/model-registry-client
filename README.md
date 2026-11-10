@@ -169,7 +169,7 @@ same shape works — even a hand-maintained static file.
 
 ```bash
 cd python && python3 -m unittest discover -s tests   # 19 tests
-cd typescript && node --test registry.test.ts        # 16 tests
+cd typescript && node --test registry.test.ts        # 24 tests
 ```
 
 No network needed — fetch and clock are injectable.
